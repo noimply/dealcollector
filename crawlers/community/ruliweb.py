@@ -7,17 +7,15 @@ import re
 
 logger = logging.getLogger(__name__)
 
-class PpomppuCrawler:
-    """뽐뿌 핫딜 게시판 크롤러"""
+class RuliwebCrawler:
+    """루리웹 핫딜 게시판 크롤러"""
     
-    BASE_URL = "https://www.ppomppu.co.kr"
-    HOTDEAL_URL = "https://www.ppomppu.co.kr/zboard/zboard.php?id=ppomppu"
-    COMMUNITY_ID = 2  # deal_community 테이블의 뽐뿌 ID
+    BASE_URL = "https://bbs.ruliweb.com"
+    HOTDEAL_URL = "https://bbs.ruliweb.com/market/board/1020"
+    COMMUNITY_ID = 3  # deal_community 테이블의 루리웹 ID
+    
     # 차단할 URL 목록
-    BLACKLISTED_URLS = [
-        "https://www.ppomppu.co.kr/view.php?id=regulation&page=1&divpage=202&no=6",
-        "https://www.ppomppu.co.kr/zboard/view.php?id=notice&no=1060"
-    ]
+    BLACKLISTED_URLS = []
     
     def __init__(self):
         self.user_agent = (
@@ -28,7 +26,7 @@ class PpomppuCrawler:
     
     def crawl(self, max_pages: int = 1) -> List[Dict]:
         """
-        뽐뿌 핫딜 게시판 크롤링
+        루리웹 핫딜 게시판 크롤링
         
         Args:
             max_pages: 크롤링할 최대 페이지 수
@@ -36,7 +34,7 @@ class PpomppuCrawler:
         Returns:
             크롤링된 딜 정보 리스트
         """
-        logger.info(f"뽐뿌 크롤링 시작 (최대 {max_pages}페이지)")
+        logger.info(f"루리웹 크롤링 시작 (최대 {max_pages}페이지)")
         deals = []
         
         with sync_playwright() as p:
@@ -56,7 +54,7 @@ class PpomppuCrawler:
             finally:
                 browser.close()
         
-        logger.info(f"뽐뿌 크롤링 완료: 총 {len(deals)}개 딜 수집")
+        logger.info(f"루리웹 크롤링 완료: 총 {len(deals)}개 딜 수집")
         return deals
     
     def _crawl_page(self, page: Page, page_num: int) -> List[Dict]:
@@ -67,7 +65,8 @@ class PpomppuCrawler:
         if page_num == 0:
             url = self.HOTDEAL_URL
         else:
-            url = f"{self.HOTDEAL_URL}&page={page_num + 1}"
+            # 루리웹은 ?page=1, ?page=2 형식
+            url = f"{self.HOTDEAL_URL}?page={page_num + 1}"
         
         # 타임아웃 증가 및 wait_until 조건 완화
         try:
@@ -81,38 +80,25 @@ class PpomppuCrawler:
         # HTML 파싱
         soup = BeautifulSoup(page.content(), 'html.parser')
         
-        # tr.baseList 셀렉터 사용
-        articles = soup.select('tr.baseList')
+        # 게시글 목록 찾기
+        # 루리웹은 tr.table_body (class="table_body blocktarget")
+        articles = soup.select('tr.table_body.blocktarget')
         
         if not articles:
             logger.warning(f"게시글을 찾을 수 없습니다. HTML 구조 확인 필요")
             # 디버깅을 위해 HTML 일부 저장
-            with open('logs/ppomppu_debug.html', 'w', encoding='utf-8') as f:
+            with open('logs/ruliweb_debug.html', 'w', encoding='utf-8') as f:
                 f.write(soup.prettify()[:5000])
-            logger.info("디버깅용 HTML이 logs/ppomppu_debug.html에 저장되었습니다")
+            logger.info("디버깅용 HTML이 logs/ruliweb_debug.html에 저장되었습니다")
             return deals
-        
-        logger.debug(f"tr.baseList 셀렉터로 {len(articles)}개 요소 발견")
         
         for article in articles:
             try:
-                # 1. baseNotice 클래스 제외 (공지사항)
-                if article.has_attr('class') and 'baseNotice' in article.get('class', []):
-                    logger.debug("공지사항 제외")
-                    continue
-                
-                # 2. hotpop_bg_color 클래스 제외
-                if article.has_attr('class') and 'hotpop_bg_color' in article.get('class', []):
-                    logger.debug("hotpop_bg_color 게시글 제외")
-                    continue
-                
-                # 3. 게시글 번호가 숫자가 아니면 제외
-                numb_elem = article.select_one('td.baseList-numb')
-                if numb_elem:
-                    numb_text = numb_elem.get_text(strip=True)
-                    # 숫자가 아니면 제외
-                    if not numb_text.isdigit():
-                        logger.debug(f"숫자가 아닌 게시글 번호 제외: {numb_text}")
+                # 공지사항 제외
+                if article.has_attr('class'):
+                    classes = article.get('class', [])
+                    if any(cls in ['notice', 'notice_eng', 'notice_kor'] for cls in classes):
+                        logger.debug("공지사항 제외")
                         continue
                 
                 deal = self._parse_article(article)
@@ -127,14 +113,14 @@ class PpomppuCrawler:
     def _parse_article(self, article) -> Optional[Dict]:
         """게시글 파싱"""
         try:
-            # 제목 추출 - 여러 셀렉터 시도
+            # 제목 추출
             title_elem = None
             title_selectors = [
-                'a[class*="title"]',
-                'td.list_title a',
-                '.title a',
-                'td[class*="title"] a',
-                'a[href*="view"]'
+                'a.deco',
+                'td.subject a',
+                'a[class*="subject"]',
+                'td a.deco',
+                'a'
             ]
             
             for selector in title_selectors:
@@ -155,14 +141,14 @@ class PpomppuCrawler:
             href = title_elem.get('href', '')
             if not href:
                 return None
-                
+            
             if href.startswith('/'):
                 url = self.BASE_URL + href
             elif href.startswith('http'):
                 url = href
             else:
                 url = self.BASE_URL + '/' + href
-
+            
             # 차단된 URL인지 확인
             if url in self.BLACKLISTED_URLS:
                 return None
@@ -171,16 +157,16 @@ class PpomppuCrawler:
             image_url = self._extract_image_url(article)
             
             # 작성일 추출 및 형식 변환
-            # 26.01.29 23:15:41 → 2026-01-29 23:15:41
+            # 26.02.01 11:05:05 → 2026-02-01 11:05:05
             post_date = self._extract_date(article)
             if post_date:
-                parts = post_date.split(' ')        # ['26.01.29', '23:15:41']
-                date_part = parts[0].split('.')     # ['26', '01', '29']
+                parts = post_date.split(' ')        # ['26.02.01', '11:05:05']
+                date_part = parts[0].split('.')     # ['26', '02', '01']
                 time_part = parts[1] if len(parts) > 1 else '00:00:00'
-                post_date = f"20{date_part[0]}-{date_part[1]}-{date_part[2]} {time_part}"
+                post_date = f"{date_part[0]}-{date_part[1]}-{date_part[2]} {time_part}"
             
-            # 카테고리 추출 - HTML의 small 태그에서 추출
-            category = self._extract_category_from_html(article)
+            # 카테고리 추출
+            category = self._extract_category(article, title)
             
             deal = {
                 'title': title,
@@ -197,30 +183,28 @@ class PpomppuCrawler:
             logger.debug(f"게시글 파싱 중 오류: {str(e)}")
             return None
     
-    def _extract_category_from_html(self, article) -> str:
-        """HTML에서 카테고리 추출"""
+    def _extract_category(self, article, title: str) -> str:
+        """카테고리 추출"""
         try:
-            # <small class="baseList-small"> 태그에서 카테고리 추출
-            category_elem = article.select_one('small.baseList-small')
-            if category_elem:
-                category = category_elem.get_text(strip=True)
-                return category  # [가전/가구] 형태 그대로 반환
-            
-            # 대체 셀렉터 시도
-            alternative_selectors = [
-                'small[class*="category"]',
-                '.category',
+            # HTML에서 카테고리 태그 찾기
+            category_selectors = [
+                'td.divsn a',
                 'span.category',
-                'small'
+                'td[class*="category"]',
+                '.divsn'
             ]
             
-            for selector in alternative_selectors:
+            for selector in category_selectors:
                 category_elem = article.select_one(selector)
                 if category_elem:
-                    text = category_elem.get_text(strip=True)
-                    # [로 시작하는 카테고리만 반환
-                    if text and text.startswith('[') and text.endswith(']'):
-                        return text
+                    cat_text = category_elem.get_text(strip=True)
+                    if cat_text:
+                        return f"[{cat_text}]"
+            
+            # 제목에서 [] 패턴 추출
+            match = re.search(r'(\[[^\]]+\])', title)
+            if match:
+                return match.group(1)
             
             return ''
             
@@ -235,8 +219,7 @@ class PpomppuCrawler:
             img_selectors = [
                 'img',
                 'td img',
-                '.list_img img',
-                'td[class*="img"] img'
+                'span.thumb img'
             ]
             
             for selector in img_selectors:
@@ -244,12 +227,13 @@ class PpomppuCrawler:
                 if img_elem:
                     src = img_elem.get('src', '')
                     if not src:
-                        # data-src 속성도 확인 (lazy loading)
                         src = img_elem.get('data-src', '')
                     
                     if src:
                         # 상대 경로를 절대 경로로 변환
-                        if src.startswith('/'):
+                        if src.startswith('//'):
+                            return 'https:' + src
+                        elif src.startswith('/'):
                             return self.BASE_URL + src
                         elif src.startswith('http'):
                             return src
@@ -265,45 +249,20 @@ class PpomppuCrawler:
     def _extract_date(self, article) -> Optional[str]:
         """HTML에서 작성일 추출"""
         try:
-            # 뽐뿌의 날짜 형식: <td title="26.01.29 23:15:41"><time>26/01/29</time></td>
-            # title 속성에 정확한 날짜/시간이 있음
-            date_elem = article.select_one('time.baseList-time')
-            if date_elem:
-                # 부모 td 태그의 title 속성 확인
-                parent_td = date_elem.find_parent('td')
-                if parent_td and parent_td.get('title'):
-                    return parent_td.get('title')  # "26.01.29 23:15:41" 그대로 반환
-                
-                # title이 없으면 time 태그 내용 사용
-                time_text = date_elem.get_text(strip=True)
-                if time_text:
-                    return time_text  # "26/01/29"
-            
-            # 대체: td.baseList-space의 title 속성 직접 찾기
-            date_td = article.select_one('td.baseList-space[title]')
-            if date_td:
-                title_text = date_td.get('title')
-                if title_text:
-                    return title_text
-            
-            # 추가 대체 셀렉터
-            alternative_selectors = [
-                'time',
-                'td[title]',
-                'td.list_date',
+            # 루리웹 날짜 형식 찾기
+            date_selectors = [
+                'td.time',
+                'span.time',
                 'td[class*="date"]',
+                '.regdate',
+                'td.date'
             ]
             
-            for selector in alternative_selectors:
+            for selector in date_selectors:
                 date_elem = article.select_one(selector)
                 if date_elem:
-                    # title 속성 우선 확인
-                    if date_elem.get('title'):
-                        return date_elem.get('title')
-                    
-                    # text 내용 사용
                     date_text = date_elem.get_text(strip=True)
-                    if date_text and re.search(r'\d', date_text):
+                    if date_text:
                         return date_text
             
             return None
@@ -320,7 +279,7 @@ if __name__ == '__main__':
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    crawler = PpomppuCrawler()
+    crawler = RuliwebCrawler()
     deals = crawler.crawl(max_pages=1)
     
     print(f"\n총 {len(deals)}개 딜 수집")
