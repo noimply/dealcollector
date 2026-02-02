@@ -178,6 +178,8 @@ class CoolenjoyCrawler:
 
             # 날짜 + 이미지 주소 (상세 페이지로 진입)
             post_date, image_url = self._extract_detail(page, url)
+            if not post_date:
+                return None
 
             deal = {
                 'title': title,
@@ -224,11 +226,13 @@ class CoolenjoyCrawler:
             time_elem = soup.select_one('time')
             if time_elem:
                 date_text = time_elem.get_text(strip=True)
+                print(date_text)
                 if date_text:
                     try:
                         # 2026.02.01 08:44 → 2026-02-01 08:44:00
                         dt = datetime.strptime(date_text, '%Y.%m.%d %H:%M')
                         post_date = dt.strftime('%Y-%m-%d %H:%M:%S')
+                        print(post_date)
                         logger.debug(f"날짜 추출 성공: {post_date}")
                     except ValueError as e:
                         logger.debug(f"날짜 파싱 실패: {date_text} / {e}")

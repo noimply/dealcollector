@@ -200,6 +200,8 @@ class ClienCrawler:
             
             # 작성일 추출
             post_date = self._extract_date(article)
+            if not post_date:
+                return None
             
             # 카테고리 추출
             category = self._extract_category(article, title)

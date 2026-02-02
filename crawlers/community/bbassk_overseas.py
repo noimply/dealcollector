@@ -168,6 +168,8 @@ class BbssakOverseasCrawler:
 
             # 작성일 추출 (개별 게시글 페이지로 진입)
             post_date = self._extract_date(page, url)
+            if not post_date:
+                return None
 
             # deal 생성
             deal = {

@@ -178,6 +178,8 @@ class EtolandCrawler:
 
             # 날짜 + 카테고리 추출 (상세 페이지로 진입)
             post_date = self._extract_detail(page, url)
+            if not post_date:
+                return None
 
             deal = {
                 'title': title,

@@ -142,13 +142,7 @@ class RuliwebCrawler:
         try:
             # 제목 추출
             title_elem = None
-            title_selectors = [
-                'a.deco',
-                'td.subject a',
-                'a[class*="subject"]',
-                'td a.deco',
-                'a'
-            ]
+            title_selectors = ['a.subject_link']
             
             for selector in title_selectors:
                 title_elem = article.select_one(selector)
@@ -159,6 +153,7 @@ class RuliwebCrawler:
                 return None
             
             title = title_elem.get_text(strip=True)
+            title = re.sub(r'\(\d+\)$', '', title)
             
             # 빈 제목이나 너무 짧은 제목 제외
             if not title or len(title) < 3:
@@ -179,18 +174,15 @@ class RuliwebCrawler:
             # 차단된 URL인지 확인
             if url in self.BLACKLISTED_URLS:
                 return None
-            
+
             # 이미지 URL 추출
             image_url = self._extract_image_url(article)
             
             # 작성일 추출 및 형식 변환
             # 26.02.01 11:05:05 → 2026-02-01 11:05:05
             post_date = self._extract_date(article)
-            if post_date:
-                parts = post_date.split(' ')        # ['26.02.01', '11:05:05']
-                date_part = parts[0].split('.')     # ['26', '02', '01']
-                time_part = parts[1] if len(parts) > 1 else '00:00:00'
-                post_date = f"{date_part[0]}-{date_part[1]}-{date_part[2]} {time_part}"
+            if not post_date:
+                return None
             
             # 카테고리 추출
             category = self._extract_category(article, title)
@@ -274,26 +266,28 @@ class RuliwebCrawler:
             return None
     
     def _extract_date(self, article) -> Optional[str]:
-        """HTML에서 작성일 추출"""
+        """HTML에서 작성일 추출 (HH:MM 형식만 허용)"""
         try:
-            # 루리웹 날짜 형식 찾기
-            date_selectors = [
-                'td.time',
-                'span.time',
-                'td[class*="date"]',
-                '.regdate',
-                'td.date'
-            ]
-            
+            date_selectors = ['td.time']
+
             for selector in date_selectors:
                 date_elem = article.select_one(selector)
-                if date_elem:
-                    date_text = date_elem.get_text(strip=True)
-                    if date_text:
-                        return date_text
-            
+                if not date_elem:
+                    continue
+
+                date_text = date_elem.get_text(strip=True)
+                if not date_text:
+                    continue
+
+                # HH:MM 형식만 허용
+                if not re.fullmatch(r'\d{2}:\d{2}', date_text):
+                    return None
+
+                now = datetime.now()
+                return f"{now.strftime('%Y-%m-%d')} {date_text}:00"
+
             return None
-            
+
         except Exception as e:
             logger.debug(f"작성일 추출 실패: {str(e)}")
             return None

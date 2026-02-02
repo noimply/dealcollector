@@ -205,6 +205,9 @@ class PpomppuCrawler:
                 date_part = parts[0].split('.')     # ['26', '01', '29']
                 time_part = parts[1] if len(parts) > 1 else '00:00:00'
                 post_date = f"20{date_part[0]}-{date_part[1]}-{date_part[2]} {time_part}"
+
+            if not post_date:
+                return None
             
             # 카테고리 추출 - HTML의 small 태그에서 추출
             category = self._extract_category_from_html(article)
