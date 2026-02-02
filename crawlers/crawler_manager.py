@@ -13,6 +13,24 @@ class CrawlerManager:
         self.supabase = supabase
         self.crawlers = {}
         self._register_crawlers()
+        self.latest_urls = {}  # 각 커뮤니티의 최신 URL 캐시
+    
+    def _get_latest_urls(self):
+        """각 커뮤니티의 최신 URL 조회"""
+        try:
+            # DISTINCT ON으로 각 커뮤니티의 최신 URL 1개씩 가져오기
+            result = self.supabase.rpc('get_latest_urls_per_community').execute()
+            
+            if result.data:
+                for row in result.data:
+                    self.latest_urls[row['community_id']] = row['url']
+                logger.info(f"최신 URL 조회 완료: {len(self.latest_urls)}개 커뮤니티")
+            else:
+                logger.warning("최신 URL 조회 결과 없음 (첫 실행일 수 있음)")
+                
+        except Exception as e:
+            logger.warning(f"최신 URL 조회 실패 (첫 실행일 수 있음): {str(e)}")
+            self.latest_urls = {}
     
     def _register_crawlers(self):
         """크롤러 등록"""
@@ -20,16 +38,31 @@ class CrawlerManager:
         from community.clien import ClienCrawler
         from community.ruliweb import RuliwebCrawler
         from community.quasarzone import QuasarzoneCrawler
+        from community.eomisae_rt import EomisaeRtCrawler
+        from community.eomisae_os import EomisaeOsCrawler
+        from community.arcalive import ArcaliveCrawler
+        from community.coolenjoy import CoolenjoyCrawler
+        from community.bbassk_korea import BbssakKoreaCrawler
+        from community.bbassk_overseas import BbssakOverseasCrawler
+        from community.dealbada_korea import DealbadaKoreaCrawler
+        from community.dealbada_overseas import DealbadaOverseasCrawler
+        from community.etoland import EtolandCrawler
         
         # 크롤러 등록 (config.py의 키와 매칭)
         self.crawlers = {
-            'ppomppu': PpomppuCrawler(),
             'clien': ClienCrawler(),
+            'ppomppu': PpomppuCrawler(),
             'ruliweb' : RuliwebCrawler(),
             'quasarzone': QuasarzoneCrawler(),
-            # 새 크롤러 추가 시 여기에만 추가하면 됨
-            # 'ruliweb': RuliwebCrawler(),
-            # 'quasarzone': QuasarzoneCrawler(),
+            'eomisae_rt': EomisaeRtCrawler(),
+            'eomisae_os': EomisaeOsCrawler(),
+            'arcalive': ArcaliveCrawler(),
+            'coolenjoy': CoolenjoyCrawler(),
+            'bbassak_korea': BbssakKoreaCrawler(),
+            'bbassak_overseas': BbssakOverseasCrawler(),
+            'dealbada_korea': DealbadaKoreaCrawler(),
+            'dealbada_overseas': DealbadaOverseasCrawler(),
+            'etoland': EtolandCrawler()
         }
         
         logger.info(f"총 {len(self.crawlers)}개 크롤러 등록 완료")
@@ -43,6 +76,9 @@ class CrawlerManager:
             save_deals_fn: DB 저장 함수
             cleanup_fn: 정리 함수
         """
+        # 각 커뮤니티의 최신 URL 조회
+        self._get_latest_urls()
+        
         total_crawled = 0
         total_saved = 0
         
@@ -54,10 +90,18 @@ class CrawlerManager:
             
             try:
                 config = CRAWL_CONFIG[name]
-                logger.info(f"{name} 크롤링 시작...")
+                community_id = config['community_id']
+                last_url = self.latest_urls.get(community_id)
                 
-                # 크롤링
-                deals = crawler.crawl(max_pages=config['max_pages'])
+                logger.info(f"{name} 크롤링 시작...")
+                if last_url:
+                    logger.info(f"{name} 최신 URL: {last_url}")
+                
+                # 크롤링 (last_url 전달)
+                deals = crawler.crawl(
+                    max_pages=config['max_pages'],
+                    last_url=last_url
+                )
                 
                 if not deals:
                     logger.warning(f"{name}: 수집된 딜이 없습니다")

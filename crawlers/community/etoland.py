@@ -8,12 +8,12 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
-class QuasarzoneCrawler:
+class EtolandCrawler:
     """퀘이사존 핫딜 크롤러"""
 
-    BASE_URL = "https://quasarzone.com"
-    HOTDEAL_URL = "https://quasarzone.com/bbs/qb_saleinfo"
-    COMMUNITY_ID = 40
+    BASE_URL = "https://www.etoland.co.kr"
+    HOTDEAL_URL = "https://www.etoland.co.kr/bbs/board.php?bo_table=hotdeal"
+    COMMUNITY_ID = 100
 
     BLACKLISTED_URLS = []
 
@@ -26,7 +26,7 @@ class QuasarzoneCrawler:
 
     def crawl(self, max_pages: int = 1, last_url: str = None) -> List[Dict]:
         """
-        퀘이사존 핫딜 크롤링
+        이토랜드 핫딜 크롤링
 
         Args:
             max_pages: 크롤링할 최대 페이지 수
@@ -34,7 +34,7 @@ class QuasarzoneCrawler:
         Returns:
             크롤링된 딜 정보 리스트
         """
-        logger.info(f"퀘이사존 크롤링 시작 (최대 {max_pages}페이지)")
+        logger.info(f"이토랜드 크롤링 시작 (최대 {max_pages}페이지)")
         if last_url:
             logger.info(f"중복 체크 URL: {last_url}")
 
@@ -56,7 +56,7 @@ class QuasarzoneCrawler:
                     page_deals, stop_flag = self._crawl_page(page, page_num, last_url)
                     deals.extend(page_deals)
                     logger.info(f"페이지 {page_num + 1}에서 {len(page_deals)}개 딜 수집")
-                    
+
                     if stop_flag:
                         should_stop = True
 
@@ -65,7 +65,7 @@ class QuasarzoneCrawler:
             finally:
                 browser.close()
 
-        logger.info(f"퀘이사존 크롤링 완료: 총 {len(deals)}개 딜 수집")
+        logger.info(f"이토랜드 크롤링 완료: 총 {len(deals)}개 딜 수집")
         return deals
 
     def _crawl_page(self, page: Page, page_num: int, last_url: str = None) -> tuple:
@@ -85,7 +85,7 @@ class QuasarzoneCrawler:
         if page_num == 0:
             url = self.HOTDEAL_URL
         else:
-            url = f"{self.HOTDEAL_URL}?page={page_num + 1}"
+            url = f"{self.HOTDEAL_URL}&page={page_num + 1}"
 
         try:
             # networkidle 대신 domcontentloaded 사용 (타임아웃 방지)
@@ -97,9 +97,8 @@ class QuasarzoneCrawler:
 
         soup = BeautifulSoup(page.content(), 'html.parser')
 
-        # 퀘이사존 게시글 목록
-        # #frmSearch > div > div.list-board-wrap > div.market-type-list.market-info-type-list.relative > table > tbody > tr
-        articles = soup.select('#frmSearch > div > div.list-board-wrap > div.market-type-list.market-info-type-list.relative > table > tbody > tr')
+        # 이토랜드 게시글 목록
+        articles = soup.select('li.list.hotdeal_list:not(.pin_write)')
 
         if not articles:
             logger.warning("게시글을 찾을 수 없습니다. HTML 구조 확인 필요")
@@ -114,7 +113,7 @@ class QuasarzoneCrawler:
         seen_urls = set()
         unique_articles = []
         for article in articles:
-            link = article.select_one('a.subject-link')
+            link = article.select_one('a.hotdeal_content_title_link')
             href = link.get('href', '')
             if href and href not in seen_urls:
                 seen_urls.add(href)
@@ -124,11 +123,12 @@ class QuasarzoneCrawler:
             try:
                 deal = self._parse_article(page, article)
                 if deal:
+                    # last_url 체크 - 이전 크롤링 지점 발견시 중단
                     if last_url and deal['url'] == last_url:
                         logger.info(f"이전 크롤링 지점 발견: {last_url}")
                         should_stop = True
                         break
-                    
+
                     deals.append(deal)
             except Exception as e:
                 logger.warning(f"게시글 파싱 실패: {str(e)}")
@@ -140,7 +140,7 @@ class QuasarzoneCrawler:
         """게시글 파싱"""
         try:
             # URL 추출
-            link = article.select_one('a.subject-link')
+            link = article.select_one('a.hotdeal_content_title_link')
             if not link:
                 return None
 
@@ -162,7 +162,7 @@ class QuasarzoneCrawler:
                 return None
 
             # 제목 추출 (목록)
-            title_elem = article.select_one('span.ellipsis-with-reply-cnt')
+            title_elem = article.select_one('a.hotdeal_content_title_link')
             if not title_elem:
                 return None
 
@@ -173,8 +173,11 @@ class QuasarzoneCrawler:
             # 이미지 URL 추출 (목록)
             image_url = self._extract_image_url(article)
 
+            # 카테고리 추출
+            category = self._extract_category(article)
+
             # 날짜 + 카테고리 추출 (상세 페이지로 진입)
-            post_date, category = self._extract_detail(page, url)
+            post_date = self._extract_detail(page, url)
 
             deal = {
                 'title': title,
@@ -191,10 +194,9 @@ class QuasarzoneCrawler:
             logger.debug(f"게시글 파싱 중 오류: {str(e)}")
             return None
 
-    def _extract_detail(self, page: Page, url: str) -> tuple:
+    def _extract_detail(self, page: Page, url: str) -> str:
         """상세 페이지로 진입하여 날짜와 카테고리를 한번에 추출"""
         post_date = None
-        category = ''
 
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -202,44 +204,32 @@ class QuasarzoneCrawler:
 
             soup = BeautifulSoup(page.content(), 'html.parser')
 
-            # 카테고리: div.ca_name
-            category_elem = soup.select_one('div.ca_name')
-            if category_elem:
-                cat_text = category_elem.get_text(strip=True)
-                if cat_text:
-                    # [] 제거 후 다시 감싸기
-                    cat_text = cat_text.strip('[]').strip()
-                    if cat_text:
-                        category = f"{cat_text}"
-                        logger.debug(f"카테고리 추출 성공: {category}")
-            else:
-                logger.debug(f"카테고리 요소를 찾을 수 없음: {url}")
-
-            # 날짜: span.date
-            # 형식: 2026.02.01 08:44
-            time_elem = soup.select_one('span.date')
+            # datetime
+            time_elem = soup.select_one('span.datetime')
             if time_elem:
                 date_text = time_elem.get_text(strip=True)
                 if date_text:
                     try:
-                        # 2026.02.01 08:44 → 2026-02-01 08:44:00
-                        dt = datetime.strptime(date_text, '%Y.%m.%d %H:%M')
+                        # 요일 제거
+                        cleaned = re.sub(r'\s*\([^)]+\)\s*', ' ', date_text).strip()
+                        # 2026-02-02 12:26 → 2026-02-02 12:26:00
+                        dt = datetime.strptime(cleaned, '%Y-%m-%d %H:%M')
                         post_date = dt.strftime('%Y-%m-%d %H:%M:%S')
                         logger.debug(f"날짜 추출 성공: {post_date}")
                     except ValueError as e:
                         logger.debug(f"날짜 파싱 실패: {date_text} / {e}")
             else:
-                logger.debug(f"날짜 요소를 찾을 수 없음: {url}")
+                logger.debug(f"날짜 요소를 찾을 수 없음")
 
         except Exception as e:
             logger.debug(f"상세 페이지 파싱 실패 ({url}): {str(e)}")
 
-        return post_date, category
+        return post_date
 
     def _extract_image_url(self, article) -> Optional[str]:
         """이미지 URL 추출"""
         try:
-            img_elem = article.select_one('img.maxImg')
+            img_elem = article.select_one('div.image').select_one('img')
             if not img_elem:
                 return None
 
@@ -256,6 +246,22 @@ class QuasarzoneCrawler:
             else:
                 return self.BASE_URL + '/' + src
 
+        except Exception as e:
+            logger.debug(f"이미지 URL 추출 실패: {str(e)}")
+            return None
+
+    def _extract_category(self, article) -> Optional[str]:
+        """카테고리 추출"""
+        try:
+            cate_elem = article.select_one('div.hotdeal_etc > span:nth-child(3)')
+            if not cate_elem:
+                return None
+            
+            category = cate_elem.get_text(strip=True)
+            if not category:
+                return None
+
+            return category
         except Exception as e:
             logger.debug(f"이미지 URL 추출 실패: {str(e)}")
             return None

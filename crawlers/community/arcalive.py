@@ -3,17 +3,16 @@ from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright, Page
 from bs4 import BeautifulSoup
 import re
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
-class QuasarzoneCrawler:
-    """퀘이사존 핫딜 크롤러"""
+class ArcaliveCrawler:
+    """아카라이브 핫딜 크롤러"""
 
-    BASE_URL = "https://quasarzone.com"
-    HOTDEAL_URL = "https://quasarzone.com/bbs/qb_saleinfo"
-    COMMUNITY_ID = 40
+    BASE_URL = "https://arca.live"
+    HOTDEAL_URL = "https://arca.live/b/hotdeal"
+    COMMUNITY_ID = 60
 
     BLACKLISTED_URLS = []
 
@@ -26,18 +25,19 @@ class QuasarzoneCrawler:
 
     def crawl(self, max_pages: int = 1, last_url: str = None) -> List[Dict]:
         """
-        퀘이사존 핫딜 크롤링
+        아카라이브 핫딜 크롤링
 
         Args:
             max_pages: 크롤링할 최대 페이지 수
+            last_url: 이전 크롤링의 마지막 URL (이 URL을 만나면 중단)
 
         Returns:
             크롤링된 딜 정보 리스트
         """
-        logger.info(f"퀘이사존 크롤링 시작 (최대 {max_pages}페이지)")
+        logger.info(f"아카라이브 크롤링 시작 (최대 {max_pages}페이지)")
         if last_url:
             logger.info(f"중복 체크 URL: {last_url}")
-
+        
         deals = []
         should_stop = False  # 중단 플래그
 
@@ -56,7 +56,7 @@ class QuasarzoneCrawler:
                     page_deals, stop_flag = self._crawl_page(page, page_num, last_url)
                     deals.extend(page_deals)
                     logger.info(f"페이지 {page_num + 1}에서 {len(page_deals)}개 딜 수집")
-                    
+
                     if stop_flag:
                         should_stop = True
 
@@ -65,7 +65,7 @@ class QuasarzoneCrawler:
             finally:
                 browser.close()
 
-        logger.info(f"퀘이사존 크롤링 완료: 총 {len(deals)}개 딜 수집")
+        logger.info(f"아카라이브 크롤링 완료: 총 {len(deals)}개 딜 수집")
         return deals
 
     def _crawl_page(self, page: Page, page_num: int, last_url: str = None) -> tuple:
@@ -88,42 +88,44 @@ class QuasarzoneCrawler:
             url = f"{self.HOTDEAL_URL}?page={page_num + 1}"
 
         try:
-            # networkidle 대신 domcontentloaded 사용 (타임아웃 방지)
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(2000)
+            page.goto(url, wait_until="networkidle", timeout=60000)
+            page.wait_for_timeout(3000)  # Next.js 클라이언트 렌더링 대기
         except Exception as e:
             logger.error(f"페이지 로딩 실패: {url} - {str(e)}")
             return deals, should_stop
 
         soup = BeautifulSoup(page.content(), 'html.parser')
 
-        # 퀘이사존 게시글 목록
-        # #frmSearch > div > div.list-board-wrap > div.market-type-list.market-info-type-list.relative > table > tbody > tr
-        articles = soup.select('#frmSearch > div > div.list-board-wrap > div.market-type-list.market-info-type-list.relative > table > tbody > tr')
+        # 아카라이브 게시글 목록: a[href*="/b/hotdeal/"] 중 숫자 ID가 포함된 링크
+        articles = [
+            a for a in soup.select('a[href]')
+            if re.search(r'/b/hotdeal/\d+', a.get('href', ''))
+        ]
 
         if not articles:
             logger.warning("게시글을 찾을 수 없습니다. HTML 구조 확인 필요")
-            with open('logs/quasarzone_debug.html', 'w', encoding='utf-8') as f:
+            with open('logs/arcalive_debug.html', 'w', encoding='utf-8') as f:
                 f.write(soup.prettify()[:10000])
-            logger.info("디버깅용 HTML이 logs/quasarzone_debug.html에 저장되었습니다")
+            logger.info("디버깅용 HTML이 logs/arcalive_debug.html에 저장되었습니다")
             return deals, should_stop
 
-        logger.debug(f"{len(articles)}개 게시글 발견")
+        logger.debug(f"{len(articles)}개 게시글 링크 발견")
 
-        # 중복 URL 제거
+        # 중복 URL 제거 (같은 글에 여러 링크가 올 수 있음)
         seen_urls = set()
         unique_articles = []
         for article in articles:
-            link = article.select_one('a.subject-link')
-            href = link.get('href', '')
-            if href and href not in seen_urls:
-                seen_urls.add(href)
+            href = article.get('href', '')
+            match = re.search(r'/b/hotdeal/(\d+)', href)
+            if match and match.group(1) not in seen_urls:
+                seen_urls.add(match.group(1))
                 unique_articles.append(article)
 
         for article in unique_articles:
             try:
                 deal = self._parse_article(page, article)
                 if deal:
+                    # last_url 체크 - 이전 크롤링 지점 발견시 중단
                     if last_url and deal['url'] == last_url:
                         logger.info(f"이전 크롤링 지점 발견: {last_url}")
                         should_stop = True
@@ -140,21 +142,14 @@ class QuasarzoneCrawler:
         """게시글 파싱"""
         try:
             # URL 추출
-            link = article.select_one('a.subject-link')
-            if not link:
-                return None
-
-            href = link.get('href', '')
+            href = article.get('href', '')
             if not href:
                 return None
 
-            # URL 정규화
-            if href.startswith('http'):
-                url = href
-            elif href.startswith('//'):
-                url = 'https:' + href
-            elif href.startswith('/'):
+            if href.startswith('/'):
                 url = self.BASE_URL + href
+            elif href.startswith('http'):
+                url = href
             else:
                 url = self.BASE_URL + '/' + href
 
@@ -162,11 +157,7 @@ class QuasarzoneCrawler:
                 return None
 
             # 제목 추출 (목록)
-            title_elem = article.select_one('span.ellipsis-with-reply-cnt')
-            if not title_elem:
-                return None
-
-            title = title_elem.get_text(strip=True)
+            title = article.get_text(strip=True)
             if not title or len(title) < 3:
                 return None
 
@@ -197,13 +188,13 @@ class QuasarzoneCrawler:
         category = ''
 
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.goto(url, wait_until="networkidle", timeout=60000)
             page.wait_for_timeout(2000)
 
             soup = BeautifulSoup(page.content(), 'html.parser')
 
-            # 카테고리: div.ca_name
-            category_elem = soup.select_one('div.ca_name')
+            # 카테고리: class="badge badge-success category-badge"
+            category_elem = soup.select_one('.badge.badge-success.category-badge')
             if category_elem:
                 cat_text = category_elem.get_text(strip=True)
                 if cat_text:
@@ -211,23 +202,16 @@ class QuasarzoneCrawler:
                     cat_text = cat_text.strip('[]').strip()
                     if cat_text:
                         category = f"{cat_text}"
-                        logger.debug(f"카테고리 추출 성공: {category}")
             else:
                 logger.debug(f"카테고리 요소를 찾을 수 없음: {url}")
 
-            # 날짜: span.date
-            # 형식: 2026.02.01 08:44
-            time_elem = soup.select_one('span.date')
+            # 날짜: <time datetime="2026-02-01T11:49:20.000Z">2026-02-01 20:49:20</time>
+            # 텍스트 콘텐츠가 이미 KST로 변환된 값이므로 직접 사용
+            time_elem = soup.select_one('time[datetime]')
             if time_elem:
                 date_text = time_elem.get_text(strip=True)
                 if date_text:
-                    try:
-                        # 2026.02.01 08:44 → 2026-02-01 08:44:00
-                        dt = datetime.strptime(date_text, '%Y.%m.%d %H:%M')
-                        post_date = dt.strftime('%Y-%m-%d %H:%M:%S')
-                        logger.debug(f"날짜 추출 성공: {post_date}")
-                    except ValueError as e:
-                        logger.debug(f"날짜 파싱 실패: {date_text} / {e}")
+                    post_date = date_text
             else:
                 logger.debug(f"날짜 요소를 찾을 수 없음: {url}")
 
@@ -239,7 +223,7 @@ class QuasarzoneCrawler:
     def _extract_image_url(self, article) -> Optional[str]:
         """이미지 URL 추출"""
         try:
-            img_elem = article.select_one('img.maxImg')
+            img_elem = article.select_one('img')
             if not img_elem:
                 return None
 
@@ -267,7 +251,7 @@ if __name__ == '__main__':
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-    crawler = QuasarzoneCrawler()
+    crawler = ArcaliveCrawler()
     deals = crawler.crawl(max_pages=1)
 
     print(f"\n총 {len(deals)}개 딜 수집")

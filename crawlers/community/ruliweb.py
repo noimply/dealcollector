@@ -12,7 +12,7 @@ class RuliwebCrawler:
     
     BASE_URL = "https://bbs.ruliweb.com"
     HOTDEAL_URL = "https://bbs.ruliweb.com/market/board/1020"
-    COMMUNITY_ID = 3  # deal_community 테이블의 루리웹 ID
+    COMMUNITY_ID = 30  # deal_community 테이블의 루리웹 ID
     
     # 차단할 URL 목록
     BLACKLISTED_URLS = []
@@ -24,7 +24,7 @@ class RuliwebCrawler:
             'Chrome/120.0.0.0 Safari/537.36'
         )
     
-    def crawl(self, max_pages: int = 1) -> List[Dict]:
+    def crawl(self, max_pages: int = 1, last_url: str = None) -> List[Dict]:
         """
         루리웹 핫딜 게시판 크롤링
         
@@ -35,7 +35,11 @@ class RuliwebCrawler:
             크롤링된 딜 정보 리스트
         """
         logger.info(f"루리웹 크롤링 시작 (최대 {max_pages}페이지)")
+        if last_url:
+            logger.info(f"중복 체크 URL: {last_url}")
+
         deals = []
+        should_stop = False  # 중단 플래그
         
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -44,10 +48,17 @@ class RuliwebCrawler:
             
             try:
                 for page_num in range(max_pages):
+                    if should_stop:
+                        logger.info(f"이전 크롤링 지점 도달 - 크롤링 중단")
+                        break
+
                     logger.info(f"페이지 {page_num + 1} 크롤링 중...")
-                    page_deals = self._crawl_page(page, page_num)
+                    page_deals, stop_flag = self._crawl_page(page, page_num, last_url)
                     deals.extend(page_deals)
                     logger.info(f"페이지 {page_num + 1}에서 {len(page_deals)}개 딜 수집")
+
+                    if stop_flag:
+                        should_stop = True
                     
             except Exception as e:
                 logger.error(f"크롤링 중 오류 발생: {str(e)}", exc_info=True)
@@ -57,9 +68,19 @@ class RuliwebCrawler:
         logger.info(f"루리웹 크롤링 완료: 총 {len(deals)}개 딜 수집")
         return deals
     
-    def _crawl_page(self, page: Page, page_num: int) -> List[Dict]:
-        """단일 페이지 크롤링"""
+    def _crawl_page(self, page: Page, page_num: int, last_url: str = None) -> tuple:
+        """
+        단일 페이지 크롤링
+        
+        Args:
+            page_num: 페이지 번호
+            last_url: 이전 크롤링의 마지막 URL (중단 체크용)
+        
+        Returns:
+            (deals, should_stop): 딜 리스트와 중단 플래그
+        """
         deals = []
+        should_stop = False
         
         # 페이지 이동
         if page_num == 0:
@@ -75,7 +96,7 @@ class RuliwebCrawler:
             page.wait_for_timeout(2000)
         except Exception as e:
             logger.error(f"페이지 로딩 실패: {url} - {str(e)}")
-            return deals
+            return deals, should_stop
         
         # HTML 파싱
         soup = BeautifulSoup(page.content(), 'html.parser')
@@ -90,7 +111,7 @@ class RuliwebCrawler:
             with open('logs/ruliweb_debug.html', 'w', encoding='utf-8') as f:
                 f.write(soup.prettify()[:5000])
             logger.info("디버깅용 HTML이 logs/ruliweb_debug.html에 저장되었습니다")
-            return deals
+            return deals, should_stop
         
         for article in articles:
             try:
@@ -103,12 +124,18 @@ class RuliwebCrawler:
                 
                 deal = self._parse_article(article)
                 if deal:
+                    # last_url 체크 - 이전 크롤링 지점 발견시 중단
+                    if last_url and deal['url'] == last_url:
+                        logger.info(f"이전 크롤링 지점 발견: {last_url}")
+                        should_stop = True
+                        break
+                    
                     deals.append(deal)
             except Exception as e:
                 logger.warning(f"게시글 파싱 실패: {str(e)}")
                 continue
         
-        return deals
+        return deals, should_stop
     
     def _parse_article(self, article) -> Optional[Dict]:
         """게시글 파싱"""
@@ -184,30 +211,30 @@ class RuliwebCrawler:
             return None
     
     def _extract_category(self, article, title: str) -> str:
-        """카테고리 추출"""
+        #"""카테고리 추출 ([] 제거된 순수 값 반환)"""
         try:
-            # HTML에서 카테고리 태그 찾기
             category_selectors = [
                 'td.divsn a',
                 'span.category',
                 'td[class*="category"]',
                 '.divsn'
             ]
-            
+
             for selector in category_selectors:
                 category_elem = article.select_one(selector)
                 if category_elem:
                     cat_text = category_elem.get_text(strip=True)
                     if cat_text:
-                        return f"[{cat_text}]"
-            
-            # 제목에서 [] 패턴 추출
-            match = re.search(r'(\[[^\]]+\])', title)
+                        # [국내] → 국내
+                        return re.sub(r'^\[|\]$', '', cat_text).strip()
+
+            # 제목에서 [] 패턴 추출 → [] 제거
+            match = re.search(r'\[([^\]]+)\]', title)
             if match:
-                return match.group(1)
-            
+                return match.group(1).strip()
+
             return ''
-            
+
         except Exception as e:
             logger.debug(f"카테고리 추출 실패: {str(e)}")
             return ''

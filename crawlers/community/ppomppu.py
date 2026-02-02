@@ -12,7 +12,7 @@ class PpomppuCrawler:
     
     BASE_URL = "https://www.ppomppu.co.kr"
     HOTDEAL_URL = "https://www.ppomppu.co.kr/zboard/zboard.php?id=ppomppu"
-    COMMUNITY_ID = 2  # deal_community 테이블의 뽐뿌 ID
+    COMMUNITY_ID = 20  # deal_community 테이블의 뽐뿌 ID
     # 차단할 URL 목록
     BLACKLISTED_URLS = [
         "https://www.ppomppu.co.kr/view.php?id=regulation&page=1&divpage=202&no=6",
@@ -26,7 +26,7 @@ class PpomppuCrawler:
             'Chrome/120.0.0.0 Safari/537.36'
         )
     
-    def crawl(self, max_pages: int = 1) -> List[Dict]:
+    def crawl(self, max_pages: int = 1, last_url: str = None) -> List[Dict]:
         """
         뽐뿌 핫딜 게시판 크롤링
         
@@ -37,7 +37,11 @@ class PpomppuCrawler:
             크롤링된 딜 정보 리스트
         """
         logger.info(f"뽐뿌 크롤링 시작 (최대 {max_pages}페이지)")
+        if last_url:
+            logger.info(f"중복 체크 URL: {last_url}")
+
         deals = []
+        should_stop = False  # 중단 플래그
         
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -46,10 +50,17 @@ class PpomppuCrawler:
             
             try:
                 for page_num in range(max_pages):
+                    if should_stop:
+                        logger.info(f"이전 크롤링 지점 도달 - 크롤링 중단")
+                        break
+
                     logger.info(f"페이지 {page_num + 1} 크롤링 중...")
-                    page_deals = self._crawl_page(page, page_num)
+                    page_deals, stop_flag = self._crawl_page(page, page_num, last_url)
                     deals.extend(page_deals)
                     logger.info(f"페이지 {page_num + 1}에서 {len(page_deals)}개 딜 수집")
+
+                    if stop_flag:
+                        should_stop = True
                     
             except Exception as e:
                 logger.error(f"크롤링 중 오류 발생: {str(e)}", exc_info=True)
@@ -59,9 +70,19 @@ class PpomppuCrawler:
         logger.info(f"뽐뿌 크롤링 완료: 총 {len(deals)}개 딜 수집")
         return deals
     
-    def _crawl_page(self, page: Page, page_num: int) -> List[Dict]:
-        """단일 페이지 크롤링"""
+    def _crawl_page(self, page: Page, page_num: int, last_url: str = None) -> tuple:
+        """
+        단일 페이지 크롤링
+        
+        Args:
+            page_num: 페이지 번호
+            last_url: 이전 크롤링의 마지막 URL (중단 체크용)
+        
+        Returns:
+            (deals, should_stop): 딜 리스트와 중단 플래그
+        """
         deals = []
+        should_stop = False
         
         # 페이지 이동
         if page_num == 0:
@@ -76,7 +97,7 @@ class PpomppuCrawler:
             page.wait_for_timeout(2000)
         except Exception as e:
             logger.error(f"페이지 로딩 실패: {url} - {str(e)}")
-            return deals
+            return deals, should_stop
         
         # HTML 파싱
         soup = BeautifulSoup(page.content(), 'html.parser')
@@ -90,7 +111,7 @@ class PpomppuCrawler:
             with open('logs/ppomppu_debug.html', 'w', encoding='utf-8') as f:
                 f.write(soup.prettify()[:5000])
             logger.info("디버깅용 HTML이 logs/ppomppu_debug.html에 저장되었습니다")
-            return deals
+            return deals, should_stop
         
         logger.debug(f"tr.baseList 셀렉터로 {len(articles)}개 요소 발견")
         
@@ -117,12 +138,18 @@ class PpomppuCrawler:
                 
                 deal = self._parse_article(article)
                 if deal:
+                    # last_url 체크 - 이전 크롤링 지점 발견시 중단
+                    if last_url and deal['url'] == last_url:
+                        logger.info(f"이전 크롤링 지점 발견: {last_url}")
+                        should_stop = True
+                        break
+
                     deals.append(deal)
             except Exception as e:
                 logger.warning(f"게시글 파싱 실패: {str(e)}")
                 continue
         
-        return deals
+        return deals, should_stop
     
     def _parse_article(self, article) -> Optional[Dict]:
         """게시글 파싱"""
@@ -197,15 +224,29 @@ class PpomppuCrawler:
             logger.debug(f"게시글 파싱 중 오류: {str(e)}")
             return None
     
+    def _clean_category(self, text: str) -> str:
+        if not text:
+            return ''
+
+        # [가전/가구] → 가전/가구
+        text = re.sub(r'^\[|\]$', '', text)
+
+        # 불필요한 공백/쉼표 제거
+        text = text.strip().strip(',')
+
+        return text if text else ''
+
+
     def _extract_category_from_html(self, article) -> str:
         """HTML에서 카테고리 추출"""
         try:
             # <small class="baseList-small"> 태그에서 카테고리 추출
             category_elem = article.select_one('small.baseList-small')
             if category_elem:
-                category = category_elem.get_text(strip=True)
-                return category  # [가전/가구] 형태 그대로 반환
-            
+                return self._clean_category(
+                    category_elem.get_text(strip=True)
+                )
+
             # 대체 셀렉터 시도
             alternative_selectors = [
                 'small[class*="category"]',
@@ -213,17 +254,16 @@ class PpomppuCrawler:
                 'span.category',
                 'small'
             ]
-            
+
             for selector in alternative_selectors:
                 category_elem = article.select_one(selector)
                 if category_elem:
                     text = category_elem.get_text(strip=True)
-                    # [로 시작하는 카테고리만 반환
                     if text and text.startswith('[') and text.endswith(']'):
-                        return text
-            
+                        return self._clean_category(text)
+
             return ''
-            
+
         except Exception as e:
             logger.debug(f"카테고리 추출 실패: {str(e)}")
             return ''
