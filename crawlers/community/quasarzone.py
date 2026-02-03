@@ -4,11 +4,12 @@ from playwright.sync_api import sync_playwright, Page
 from bs4 import BeautifulSoup
 import re
 from datetime import datetime
+from baseCrawler import BaseCrawler
 
 logger = logging.getLogger(__name__)
 
 
-class QuasarzoneCrawler:
+class QuasarzoneCrawler(BaseCrawler):
     """퀘이사존 핫딜 크롤러"""
 
     BASE_URL = "https://quasarzone.com"

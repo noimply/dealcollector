@@ -3,11 +3,12 @@ from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright, Page
 from bs4 import BeautifulSoup
 import re
+from baseCrawler import BaseCrawler
 
 logger = logging.getLogger(__name__)
 
 
-class DealbadaOverseasCrawler:
+class DealbadaOverseasCrawler(BaseCrawler):
     """딜바다 해외 핫딜 크롤러"""
 
     BASE_URL = "https://www.dealbada.com"

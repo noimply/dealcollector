@@ -3,11 +3,12 @@ from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright, Page
 from bs4 import BeautifulSoup
 import re
+from baseCrawler import BaseCrawler
 
 logger = logging.getLogger(__name__)
 
 
-class ArcaliveCrawler:
+class ArcaliveCrawler(BaseCrawler):
     """아카라이브 핫딜 크롤러"""
 
     BASE_URL = "https://arca.live"
