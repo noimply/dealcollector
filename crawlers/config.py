@@ -47,7 +47,8 @@ else:
 # 중복 체크 설정
 DUPLICATE_CHECK = {
     'enabled': True,
-    'similarity_threshold': 0.85
+    'similarity_threshold': 0.85,
+    'check_days': 1  # 최근 1일치 딜만 조회하여 중복 확인
 }
 
 # 정리 설정

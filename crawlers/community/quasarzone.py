@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright, Page
+from playwright_stealth import stealth_sync
 from bs4 import BeautifulSoup
 import re
 from datetime import datetime
@@ -43,9 +44,24 @@ class QuasarzoneCrawler(BaseCrawler):
         should_stop = False  # 중단 플래그
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(user_agent=self.user_agent)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                ]
+            )
+            context = browser.new_context(
+                user_agent=self.user_agent,
+                viewport={'width': 1920, 'height': 1080},
+                locale='ko-KR',
+            )
+            # Context Page 생성
             page = context.new_page()
+            # Stealth 적용
+            stealth_sync(page)
 
             try:
                 for page_num in range(max_pages):

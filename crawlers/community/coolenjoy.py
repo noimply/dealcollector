@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright, Page
+from playwright_stealth import stealth_sync
 from bs4 import BeautifulSoup
 import re
 from datetime import datetime
@@ -44,9 +45,24 @@ class CoolenjoyCrawler(BaseCrawler):
         should_stop = False  # 중단 플래그
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(user_agent=self.user_agent)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                ]
+            )
+            context = browser.new_context(
+                user_agent=self.user_agent,
+                viewport={'width': 1920, 'height': 1080},
+                locale='ko-KR',
+            )
+            # Context Page 생성
             page = context.new_page()
+            # Stealth 적용
+            stealth_sync(page)
 
             try:
                 for page_num in range(max_pages):
@@ -227,13 +243,11 @@ class CoolenjoyCrawler(BaseCrawler):
             time_elem = soup.select_one('time')
             if time_elem:
                 date_text = time_elem.get_text(strip=True)
-                print(date_text)
                 if date_text:
                     try:
                         # 2026.02.01 08:44 → 2026-02-01 08:44:00
                         dt = datetime.strptime(date_text, '%Y.%m.%d %H:%M')
                         post_date = dt.strftime('%Y-%m-%d %H:%M:%S')
-                        print(post_date)
                         logger.debug(f"날짜 추출 성공: {post_date}")
                     except ValueError as e:
                         logger.debug(f"날짜 파싱 실패: {date_text} / {e}")
