@@ -1,78 +1,78 @@
-name: Crawl Hot Deals
+# name: Crawl Hot Deals
 
-on:
-  schedule:
-    - cron: '*/13 * * * *'  # 13분마다
-  workflow_dispatch:  # 수동 실행
+# on:
+#   schedule:
+#     - cron: '*/13 * * * *'  # 13분마다
+#   workflow_dispatch:  # 수동 실행
 
-concurrency:
-  group: hotdeal-crawler
-  cancel-in-progress: true
+# concurrency:
+#   group: hotdeal-crawler
+#   cancel-in-progress: true
 
-jobs:
-  crawl:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+# jobs:
+#   crawl:
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 30
     
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+#     steps:
+#     - name: Checkout code
+#       uses: actions/checkout@v3
     
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+#     - name: Set up Python
+#       uses: actions/setup-python@v4
+#       with:
+#         python-version: '3.11'
+#         cache: 'pip'
     
-    # Playwright 브라우저 캐싱 추가
-    - name: Cache Playwright browsers
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-
+#     # Playwright 브라우저 캐싱 추가
+#     - name: Cache Playwright browsers
+#       uses: actions/cache@v3
+#       with:
+#         path: ~/.cache/ms-playwright
+#         key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
+#         restore-keys: |
+#           ${{ runner.os }}-playwright-
     
-    - name: Install Python dependencies
-      run: |
-        pip install --upgrade pip
-        pip install -r requirements.txt
+#     - name: Install Python dependencies
+#       run: |
+#         pip install --upgrade pip
+#         pip install -r requirements.txt
     
-    - name: Install Playwright browsers
-      run: |
-        playwright install chromium
-        playwright install-deps chromium
+#     - name: Install Playwright browsers
+#       run: |
+#         playwright install chromium
+#         playwright install-deps chromium
     
-    # 로그 디렉토리 생성
-    - name: Create logs directory
-      run: mkdir -p crawlers/logs
+#     # 로그 디렉토리 생성
+#     - name: Create logs directory
+#       run: mkdir -p crawlers/logs
     
-    - name: Run crawler
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        GITHUB_ACTIONS: true  # 환경 감지용
-      run: |
-        cd crawlers
-        python main.py 2>&1 | tee crawler.log
+#     - name: Run crawler
+#       env:
+#         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+#         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+#         GITHUB_ACTIONS: true  # 환경 감지용
+#       run: |
+#         cd crawlers
+#         python main.py 2>&1 | tee crawler.log
     
-    # 실패 시 로그 업로드
-    - name: Upload logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: crawler-logs-${{ github.run_number }}
-        path: |
-          crawlers/logs/
-          crawlers/crawler.log
-        retention-days: 7
+#     # 실패 시 로그 업로드
+#     - name: Upload logs on failure
+#       if: failure()
+#       uses: actions/upload-artifact@v4
+#       with:
+#         name: crawler-logs-${{ github.run_number }}
+#         path: |
+#           crawlers/logs/
+#           crawlers/crawler.log
+#         retention-days: 7
     
-    # 성공 시 간단한 요약 출력
-    - name: Show summary
-      if: success()
-      run: |
-        echo "✅ Crawling completed successfully"
-        if [ -f crawlers/crawler.log ]; then
-          echo "Last 20 lines of log:"
-          tail -20 crawlers/crawler.log
-        fi
+#     # 성공 시 간단한 요약 출력
+#     - name: Show summary
+#       if: success()
+#       run: |
+#         echo "✅ Crawling completed successfully"
+#         if [ -f crawlers/crawler.log ]; then
+#           echo "Last 20 lines of log:"
+#           tail -20 crawlers/crawler.log
+#         fi
