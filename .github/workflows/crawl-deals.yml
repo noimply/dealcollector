@@ -59,7 +59,7 @@ jobs:
     # 실패 시 로그 업로드
     - name: Upload logs on failure
       if: failure()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: crawler-logs-${{ github.run_number }}
         path: |
